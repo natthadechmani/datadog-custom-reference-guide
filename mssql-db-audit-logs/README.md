@@ -1,10 +1,20 @@
 # MS SQL Server → Datadog Logs — AX 2012 R3 audit log pipelines
 
-Two ways to ingest `dbo.SYSDATABASELOG` audit rows from a Microsoft Dynamics AX 2012 R3
-SQL Server database into Datadog Logs. Both produce **the same logs** in Datadog with
-identical facets (`@RecId`, `@LogType`, `@TableId`, `@UserName`, ...). The difference
-is in the producer: how rows are read, how the "last processed" position is tracked,
-and how much code vs. config you maintain.
+> Part of the [Datadog Custom Reference Guide](../README.md) — reference implementations
+> for Datadog use cases not supported out of the box. **Not official Datadog documentation
+> or support.** See [Support & responsibility](../README.md#support--responsibility).
+
+Datadog does not ship a first-party integration for Microsoft Dynamics AX 2012 R3 database
+audit tables. This guide documents two Agent-side patterns to ingest `dbo.SYSDATABASELOG`
+rows into Datadog Logs. Both produce **the same logs** with identical facets
+(`@RecId`, `@LogType`, `@TableId`, `@UserName`, ...). The difference is in the producer:
+how rows are read, how the "last processed" position is tracked, and how much code vs.
+config you maintain.
+
+| Approach | Pattern | Official reference |
+|---|---|---|
+| A. Custom check | Agent-based integration (custom Python check + `send_log`) | [Agent Integration Log Collection](https://docs.datadoghq.com/logs/log_collection/agent_checks/) · [Create an Agent-based Integration](https://docs.datadoghq.com/extend/integrations/agent_integration/?tab=ootbintegration) |
+| B. `custom_queries` | Core `sqlserver` integration feature in [integrations-core](https://github.com/DataDog/integrations-core) | [`sqlserver` conf.yaml example](https://github.com/DataDog/integrations-core/blob/master/sqlserver/datadog_checks/sqlserver/data/conf.yaml.example) |
 
 ## What's in this folder
 
@@ -32,9 +42,14 @@ either approach. Then pick one approach and follow its `guideline.md`.
 
 ## The two approaches at a glance
 
-### A. `datadog-custom-check/` — Python custom check
+### A. `datadog-custom-check/` — Python custom check (log collection)
 
-https://docs.datadoghq.com/extend/custom_checks/write_agent_check/
+Uses the Agent check [`send_log`](https://docs.datadoghq.com/logs/log_collection/agent_checks/)
+API — the same pattern described in
+[Create an Agent-based Integration](https://docs.datadoghq.com/extend/integrations/agent_integration/?tab=ootbintegration).
+For packaged community checks, see
+[Use Community and Marketplace Integrations](https://docs.datadoghq.com/agent/guide/use-community-integrations/?tab=hostinstallation)
+and [integrations-extras](https://github.com/DataDog/integrations-extras).
 
 A small Python file (`custom_ax_audit.py`) loaded by the Datadog Agent. Queries
 `SYSDATABASELOG` and ships each row via `self.send_log()`. The last processed `RecId`
@@ -59,7 +74,10 @@ Agent scheduler ── every 60s ──▶ custom_ax_audit.py
 
 ### B. `datadog-mssql-custom-queries/` — sqlserver integration `custom_queries`
 
-https://github.com/DataDog/integrations-core/blob/6250e42b8e9d1654533592c9e69c18527e96adbf/sqlserver/datadog_checks/sqlserver/data/conf.yaml.example#L752
+Uses the official [`sqlserver` integration](https://github.com/DataDog/integrations-core/tree/master/sqlserver)
+from [integrations-core](https://github.com/DataDog/integrations-core) and its
+[`custom_queries` feature](https://github.com/DataDog/integrations-core/blob/master/sqlserver/datadog_checks/sqlserver/data/conf.yaml.example)
+with `extras: type: log`.
 
 The official Datadog `sqlserver` integration's `custom_queries` feature with
 `extras: type: log`. One YAML file. Uses a **sliding 60-second time window** in the
@@ -98,7 +116,7 @@ Agent scheduler ── every 60s ──▶ sqlserver integration
 | **Datadog UX** | `service:ax-2012 source:ax-audit` | `service:ax-2012 source:sqlserver` |
 | **Coexists with `sqlserver` integration metrics** | Yes — separate check | Yes — same conf.yaml carries both metrics and audit log emission |
 | **First-time setup steps** | ~7 | ~3 |
-| **Datadog support** | Custom code — Datadog can't directly support the Python | Official integration feature — Datadog can support |
+| **Datadog support scope** | Customer owns check logic and inputs; Datadog delivers and displays collected data | Datadog supports the `sqlserver` integration; customer owns custom SQL and mappings |
 | **Performance** | Single SQL query per minute (cursor-bounded result) | Single SQL query per minute (time-bounded result) |
 | **CPU/memory on the VM** | Negligible | Negligible |
 
@@ -120,8 +138,10 @@ Agent scheduler ── every 60s ──▶ sqlserver integration
 
 **Cons:**
 
-- **Python in production.** Custom checks aren't officially supported by Datadog —
-  if there's a bug in the script, your team owns the fix.
+- **Python in production.** The custom check is the customer's responsibility — check
+  logic, SQL, cursor handling, and source availability. Datadog is responsible for
+  delivering the data the check submits and displaying it in the app. If there is a
+  bug in the script, the customer owns the fix.
 - **`pyodbc` install** into the Agent's embedded Python is unofficial and may be
   wiped by Agent upgrades.
 - **Two files** to maintain instead of one. New columns require edits in two places
@@ -140,8 +160,9 @@ maintaining Python.
 - **Config-only.** One YAML file. No Python to deploy or maintain.
 - **No install steps.** Uses the Agent's bundled DB connector — no `pip install`, no
   ODBC driver download required on Windows.
-- **Officially supported.** This is a documented Datadog SQL Server integration
-  feature.
+- **Officially supported integration.** Datadog supports the `sqlserver` integration
+  itself. The customer is responsible for the custom query, field mappings, and
+  ensuring the query returns the expected audit data.
 - **Survives Agent upgrades cleanly** — nothing in the Agent's embedded Python to
   break.
 - **Shares the integration** with SQL Server metrics — one conf.yaml for both.
@@ -200,6 +221,17 @@ downstream queries / monitors / dashboards keep working.
 
 ---
 
+## Support & responsibility
+
+See [Support & responsibility](../README.md#support--responsibility) in the root guide.
+
+| Approach | Customer owns | Datadog owns |
+|---|---|---|
+| **A. Custom check** | Python script, SQL, cursor, source access | Data delivery & display |
+| **B. `custom_queries`** | Custom SQL and field mappings | `sqlserver` integration |
+
+---
+
 ## Getting started
 
 1. Read [`prerequisites.md`](./prerequisites.md) and complete the six common
@@ -209,3 +241,21 @@ downstream queries / monitors / dashboards keep working.
    - [datadog-custom-check/guideline.md](./datadog-custom-check/guideline.md)
    - [datadog-mssql-custom-queries/guideline.md](./datadog-mssql-custom-queries/guideline.md)
 4. Verify in Datadog Logs Explorer with `service:ax-2012`.
+
+---
+
+## Datadog documentation
+
+| Topic | Link |
+|---|---|
+| Datadog documentation | [docs.datadoghq.com](https://docs.datadoghq.com/) |
+| Core Agent integrations | [DataDog/integrations-core](https://github.com/DataDog/integrations-core) |
+| Community & Marketplace integrations | [Use Community and Marketplace Integrations](https://docs.datadoghq.com/agent/guide/use-community-integrations/?tab=hostinstallation) · [DataDog/integrations-extras](https://github.com/DataDog/integrations-extras) |
+| Agent-based integration development | [Create an Agent-based Integration](https://docs.datadoghq.com/extend/integrations/agent_integration/?tab=ootbintegration) |
+| Custom log collection from Agent checks | [Agent Integration Log Collection](https://docs.datadoghq.com/logs/log_collection/agent_checks/) |
+| API-based integration development | [Create an API-based Integration](https://docs.datadoghq.com/extend/integrations/api_integration/) |
+
+> **Note:** This use case is Agent-based (Approach A) or core-integration config (Approach B).
+> An [API-based integration](https://docs.datadoghq.com/extend/integrations/api_integration/)
+> would instead push logs from a separate service via the Datadog HTTP API — useful if
+> collection cannot run on the Agent host.
