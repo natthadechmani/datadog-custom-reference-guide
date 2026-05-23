@@ -1,0 +1,104 @@
+# =============================================================================
+#  custom_ax_audit — Datadog Agent custom check configuration
+# =============================================================================
+#
+#  This file is loaded by custom_ax_audit.py.
+#
+#  DEPLOYMENT PATH:
+#    Windows:  C:\ProgramData\Datadog\conf.d\custom_ax_audit.d\conf.yaml
+#    Linux:    /etc/datadog-agent/conf.d/custom_ax_audit.d/conf.yaml
+#
+#  NOTE: the conf folder name (custom_ax_audit.d) must match the Python
+#  filename (custom_ax_audit.py) minus the extension. This is how the
+#  Datadog Agent pairs check code to check configuration.
+#
+#  Config style mirrors the official Datadog `sqlserver` integration — separate
+#  fields for host / username / password / database / driver, so the customer
+#  sees a familiar layout. The connector: field is accepted for visual parity
+#  with the sqlserver integration but is informational only (this check always
+#  uses pyodbc under the hood).
+#
+# =============================================================================
+
+init_config:
+
+instances:
+
+  - # SQL Server host. Same format as the official sqlserver integration:
+    # "<hostname>,<port>" or just "<hostname>" if you're on the default port.
+    host: "localhost,1433"
+
+    # SQL login + password. Reuse the existing `datadog` SQL login created for
+    # the sqlserver integration (see DatadogDBIntegration/db_integration).
+    # Encrypt with the secrets backend if possible: password: ENC[...]
+    username: "datadog"
+    password: "<datadog_db_password>"
+
+    # The AX database name. Confirm with the DBA — common values:
+    # MicrosoftDynamicsAX, DynamicsAX_PROD, FINAX67_GOLIVE_2024.
+    database: "MicrosoftDynamicsAX"
+
+    # Connector — kept for visual parity with the official sqlserver integration.
+    # This check only supports `odbc` (via pyodbc); the value is informational.
+    connector: odbc
+
+    # The ODBC driver to use. Must be installed on the host. Confirm via:
+    #   ODBC Data Sources (64-bit) -> Drivers tab
+    # Common values:
+    #   "ODBC Driver 18 for SQL Server" (newest; recommended)
+    #   "ODBC Driver 17 for SQL Server" (also fine; widely deployed)
+    driver: "ODBC Driver 18 for SQL Server"
+
+    # Extra connection-string parameters appended verbatim. Use this for things
+    # like TLS settings, application name, multi-subnet failover, etc.
+    #
+    # Defaults below are for typical dev/internal SQL Server installs that use
+    # self-signed TLS certs. For production with properly-issued certs, REMOVE
+    # the TrustServerCertificate part for stricter security.
+    connection_string: "Encrypt=yes;TrustServerCertificate=yes;APP=DD-Agent-AxAudit-Check"
+
+    # AX TableIds to filter on. Same convention as the sqlserver integration's
+    # `[Table] IN (211)` clause. Find IDs via:
+    #     SELECT tabId, name FROM <db>.dbo.SqlDictionary WHERE fieldId = 0
+    table_ids:
+      - 211         # LedgerJournalTable
+      # - 210       # LedgerJournalTrans (uncomment when in scope)
+      # - 77        # CustTable
+      # - 78        # VendTable
+
+    # Settle lag (seconds) for in-flight AOS transactions. Protects against
+    # RecId reordering on multi-AOS deployments.
+    lag_seconds: 30
+
+    # Max rows per check run. Backlog drains over multiple runs.
+    batch_size: 1000
+
+    # How often the Agent runs this check (seconds).
+    min_collection_interval: 60
+
+    # Datadog log identity. These show up as `service:` and `source:` filters
+    # in Logs Explorer.
+    service:  ax-2012
+    ddsource: ax-audit
+
+    # Tags applied to log events.
+    tags:
+      - env:prod
+      - erp:dynamics-ax
+      - ax_version:2012-r3
+
+# =============================================================================
+# REQUIRED: top-level logs: block for the Datadog Agent's send_log() pipeline.
+# =============================================================================
+# Without this block, the Agent will accept self.send_log() calls from the
+# Python check but DROP them with a WARN like:
+#   "Failed to write log to file, file is nil for integration ID: custom_ax_audit:..."
+#
+# `type: integration` tells the Agent to create an internal log file for this
+# check's send_log output and ship from it. The source/service fields here
+# act as defaults that the check's send_log payload can override per-event.
+# =============================================================================
+logs:
+  - type: integration
+    source: ax-audit
+    service: ax-2012

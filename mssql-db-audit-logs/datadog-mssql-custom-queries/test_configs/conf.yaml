@@ -1,0 +1,83 @@
+# =============================================================================
+# Datadog SQL Server integration — AX 2012 R3 audit log ingestion via
+# `custom_queries` with `extras: type: log`
+# =============================================================================
+# Drop this file at:
+#   C:\ProgramData\Datadog\conf.d\sqlserver.d\conf.yaml
+#
+# This is the existing Datadog `sqlserver` integration's config file.
+# The `custom_queries:` + `extras: type: log` block reads dbo.SYSDATABASELOG
+# rows and emits each one as a Datadog log event.
+#
+# Time window:
+#   - min_collection_interval: 60   (check runs every 60s)
+#   - DATEADD(SECOND, -60, ...)     (each run looks back 60s)
+#   - Zero overlap → no duplicates, but any check delay = silent row drops.
+#     For more drop tolerance, raise both the interval AND the window in
+#     lockstep (e.g. 60s / -90s = 30s overlap, ~1.5x duplicate ingestion).
+#
+# Filter scope:
+#   - [Table] IN (211)              (LedgerJournalTable)
+#   - Add more TableIds inside the parentheses to capture other AX tables.
+#
+# Replace <datadog_db_password> with the actual password (or use the secrets
+# backend: password: ENC[<key>]).
+# =============================================================================
+
+init_config:
+
+instances:
+  - host: "localhost,1433"
+    username: "datadog"
+    password: "<datadog_db_password>"
+    connection_string: "ApplicationIntent=ReadOnly;Application Name=DD-Agent-AuditExport"
+
+    min_collection_interval: 60
+
+    custom_queries:
+      - query: |
+          SELECT TOP (10000)
+              RecId                                AS recid,
+              CreatedDateTime                      AS created_at,
+              CASE LogType
+                  WHEN 1 THEN 'Insert'
+                  WHEN 2 THEN 'Update'
+                  WHEN 4 THEN 'Delete'
+                  WHEN 8 THEN 'RenameKey'
+                  ELSE CONCAT('Type', LogType)
+              END                                  AS log_type,
+              CAST([Description] AS NVARCHAR(MAX)) AS description,
+              [Table]                              AS table_id,
+              LogRecId                             AS log_recid,
+              UserName                             AS username
+          FROM MicrosoftDynamicsAX.dbo.SYSDATABASELOG
+          WHERE CreatedDateTime >= DATEADD(SECOND, -60, SYSUTCDATETIME())
+            AND [Table] IN (211)              -- LedgerJournalTable
+          ORDER BY recid
+        columns:
+          - {name: recid,         type: source}
+          - {name: created_at,    type: source}
+          - {name: log_type,      type: source}
+          - {name: description,   type: source}
+          - {name: table_id,      type: source}
+          - {name: log_recid,     type: source}
+          - {name: username,      type: source}
+        extras:
+          - type: log
+            attributes:
+              RecId:    recid
+              LogType:  log_type
+              TableId:  table_id
+              LogRecId: log_recid
+              UserName: username
+              message:  description
+              date:     created_at
+
+logs:
+  - type: integration
+    source: sqlserver
+    service: ax-2012
+    tags:
+      - env:prod
+      - erp:dynamics-ax
+      - ax_version:2012-r3
