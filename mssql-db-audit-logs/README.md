@@ -1,8 +1,6 @@
 # MS SQL Server → Datadog Logs — AX 2012 R3 audit log pipelines
 
 > Part of the [Datadog Custom Reference Guide](../README.md) — reference implementations
-> for Datadog use cases not supported out of the box. **Not official Datadog documentation
-> or support.** See [Support & responsibility](../README.md#support--responsibility).
 
 Datadog does not ship a first-party integration for Microsoft Dynamics AX 2012 R3 database
 audit tables. This guide documents two Agent-side patterns to ingest `dbo.SYSDATABASELOG`
@@ -15,6 +13,24 @@ config you maintain.
 |---|---|---|
 | A. Custom check | Agent-based integration (custom Python check + `send_log`) | [Agent Integration Log Collection](https://docs.datadoghq.com/logs/log_collection/agent_checks/) · [Create an Agent-based Integration](https://docs.datadoghq.com/extend/integrations/agent_integration/?tab=ootbintegration) |
 | B. `custom_queries` | Core `sqlserver` integration feature in [integrations-core](https://github.com/DataDog/integrations-core) | [`sqlserver` conf.yaml example](https://github.com/DataDog/integrations-core/blob/master/sqlserver/datadog_checks/sqlserver/data/conf.yaml.example) |
+
+---
+
+## Recommendation: Approach A (custom check) for audit logs
+
+For audit log collection, **use Approach A (custom check with `persistent_cache`).**
+
+Approach B can be easier to install, but it has no persistent cursor — any Agent
+restart, GC pause, or check delay > 60s silently drops audit rows. That makes B unsuitable
+for compliance / audit use cases. Use B only for dev or best-effort scenarios.
+
+| | A. Custom check (recommended) | B. `custom_queries` |
+|---|---|---|
+| **Audit-grade delivery** | Yes — `RecId` cursor, no data loss | No — sliding window drops on restart |
+| **Ease of installation** | Medium — needs `pyodbc` + ODBC Driver 17/18 | Low — uses Agent-bundled connector |
+| **Maintenance effort** | Medium — 1 Python file + 1 YAML | Low — 1 YAML |
+
+---
 
 ## What's in this folder
 
@@ -37,6 +53,18 @@ mssql-db-audit-logs/
 
 **Start with [`prerequisites.md`](./prerequisites.md)** — six items that apply to
 either approach. Then pick one approach and follow its `guideline.md`.
+
+---
+
+## Getting started
+
+1. Read [`prerequisites.md`](./prerequisites.md) and complete the six common
+   prerequisites on the target Windows VM.
+2. Pick an approach.
+3. Follow that approach's `guideline.md`:
+   - [datadog-custom-check/guideline.md](./datadog-custom-check/guideline.md)
+   - [datadog-mssql-custom-queries/guideline.md](./datadog-mssql-custom-queries/guideline.md)
+4. Verify in Datadog Logs Explorer with `service:ax-2012`.
 
 ---
 
@@ -120,89 +148,6 @@ Agent scheduler ── every 60s ──▶ sqlserver integration
 | **Performance** | Single SQL query per minute (cursor-bounded result) | Single SQL query per minute (time-bounded result) |
 | **CPU/memory on the VM** | Negligible | Negligible |
 
----
-
-## Pros and cons
-
-### A. Custom check (`datadog-custom-check/`)
-
-**Pros:**
-
-- **Durable.** Persistent `RecId` cursor means restarts, GC pauses, and slow queries
-  never cause silent drops.
-- **Reliable backfill.** If the Agent is down for 6 hours, the next run reads every
-  RecId that appeared during the gap.
-- **Operationally observable.** The cursor file (`last_recid`) is readable. You can
-  spot a stuck cursor in 5 seconds.
-- **Cursor reset is a one-line text edit.**
-
-**Cons:**
-
-- **Python in production.** The custom check is the customer's responsibility — check
-  logic, SQL, cursor handling, and source availability. Datadog is responsible for
-  delivering the data the check submits and displaying it in the app. If there is a
-  bug in the script, the customer owns the fix.
-- **`pyodbc` install** into the Agent's embedded Python is unofficial and may be
-  wiped by Agent upgrades.
-- **Two files** to maintain instead of one. New columns require edits in two places
-  (SELECT and send_log).
-- **More moving parts to debug** when something goes wrong (Agent + check + cursor
-  file).
-
-**Best for:** customers where every audit row matters (legal / compliance), or
-environments with frequent Agent restarts (Windows Update reboots), or teams comfortable
-maintaining Python.
-
-### B. `custom_queries` (`datadog-mssql-custom-queries/`)
-
-**Pros:**
-
-- **Config-only.** One YAML file. No Python to deploy or maintain.
-- **No install steps.** Uses the Agent's bundled DB connector — no `pip install`, no
-  ODBC driver download required on Windows.
-- **Officially supported integration.** Datadog supports the `sqlserver` integration
-  itself. The customer is responsible for the custom query, field mappings, and
-  ensuring the query returns the expected audit data.
-- **Survives Agent upgrades cleanly** — nothing in the Agent's embedded Python to
-  break.
-- **Shares the integration** with SQL Server metrics — one conf.yaml for both.
-
-**Cons:**
-
-- **Silent drops possible.** The sliding 60-second window has no persistent state.
-  Any check delay > 60s loses data forever.
-- **No replay after downtime.** Restart the Agent for 5 minutes? Lose 4+ minutes of
-  audit rows.
-- **Three places to edit** when adding a column (SQL + columns + extras.attributes).
-- **No cursor file to inspect** — debugging drop scenarios is harder.
-
-**Best for:** customers who can tolerate occasional missing audit rows (the source of
-truth is still SQL — they can reconcile by RecId), or environments where Python
-deployment is operationally infeasible, or teams that prefer "fewer moving parts" to
-"zero drops".
-
----
-
-## Decision tree
-
-**Pick A (custom check) if any of:**
-
-- The audit data is compliance-grade (every row must be captured).
-- The Agent restarts frequently (Windows Update reboots common).
-- The customer has prior bad experience with silent data drops.
-- You're comfortable owning a small Python file.
-
-**Pick B (`custom_queries`) if any of:**
-
-- The audit data is "nice to have" for searching, not "every row required".
-- The customer's ops team strongly prefers config-only deployments.
-- You need a clear path to Datadog support without "but it's custom Python" caveats.
-- You don't want to manage `pyodbc` across Agent upgrades.
-
-**When in doubt:** start with B for simplicity. Reconcile against the SQL source
-table for the first week to confirm the drop rate is acceptable. If you see drops you
-can't tolerate, switch to A — both produce the same logs in Datadog, so the
-downstream queries / monitors / dashboards keep working.
 
 ---
 
@@ -229,18 +174,6 @@ See [Support & responsibility](../README.md#support--responsibility) in the root
 |---|---|---|
 | **A. Custom check** | Python script, SQL, cursor, source access | Data delivery & display |
 | **B. `custom_queries`** | Custom SQL and field mappings | `sqlserver` integration |
-
----
-
-## Getting started
-
-1. Read [`prerequisites.md`](./prerequisites.md) and complete the six common
-   prerequisites on the target Windows VM.
-2. Pick an approach.
-3. Follow that approach's `guideline.md`:
-   - [datadog-custom-check/guideline.md](./datadog-custom-check/guideline.md)
-   - [datadog-mssql-custom-queries/guideline.md](./datadog-mssql-custom-queries/guideline.md)
-4. Verify in Datadog Logs Explorer with `service:ax-2012`.
 
 ---
 
