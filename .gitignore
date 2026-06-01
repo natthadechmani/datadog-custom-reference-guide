@@ -58,6 +58,9 @@ yarn-error.log*
 *.sublime-project
 *.sublime-workspace
 
+# Claude Code
+.claude/
+
 # Logs & temp files
 *.log
 *.tmp
