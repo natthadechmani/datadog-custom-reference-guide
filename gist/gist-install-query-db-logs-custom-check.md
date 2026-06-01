@@ -263,13 +263,13 @@ class CustomAxAuditCheck(AgentCheck):
             f"    CreatedDateTime                       AS created_at, "
             f"    LogType                               AS log_type, "
             f"    CAST([Description] AS NVARCHAR(MAX))  AS description, "
-            f"    [Table]                               AS table_id, "
+            f"    [TABLE_]                              AS table_id, "
             f"    CAST(LogRecId AS BIGINT)              AS log_recid, "
             f"    UserName                              AS user_name "
             f"FROM dbo.SYSDATABASELOG "
             f"WHERE RecId > ? "
             f"  AND CreatedDateTime < DATEADD(SECOND, -?, SYSUTCDATETIME()) "
-            f"  AND [Table] IN ({sanitized_tables}) "
+            f"  AND [TABLE_] IN ({sanitized_tables}) "
             f"ORDER BY RecId ASC"
         )
 

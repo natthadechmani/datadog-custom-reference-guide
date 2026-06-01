@@ -310,13 +310,13 @@ class CustomAxAuditCheck(AgentCheck):
             "    CreatedDateTime                       AS created_at, "
             "    LogType                               AS log_type, "
             "    CAST([Description] AS NVARCHAR(MAX))  AS description, "
-            "    [Table]                               AS table_id, "
+            "    [TABLE_]                              AS table_id, "
             "    CAST(LogRecId AS BIGINT)              AS log_recid, "
             "    UserName                              AS user_name "
             "FROM dbo.SYSDATABASELOG "
             "WHERE RecId > ? "
             "  AND CreatedDateTime < DATEADD(SECOND, -?, SYSUTCDATETIME()) "
-            "  AND [Table] IN ({tables}) "
+            "  AND [TABLE_] IN ({tables}) "
             "ORDER BY RecId ASC"
         ).format(tables=sanitized_tables)
 
